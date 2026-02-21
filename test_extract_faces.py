@@ -118,6 +118,13 @@ class TestInferLabel:
 
         # ── "display" folder = spoof ──
         ("/data/display/attack01.mp4", "spoof"),
+
+        # ── Tapakah68 dataset folders ──
+        (r"C:\datasets\tapakah68\anti-spoofing\versions\3\printouts\vid.mp4", "spoof"),
+        (r"C:\datasets\tapakah68\anti-spoofing\versions\3\cut-out printouts\vid.mp4", "spoof"),
+        (r"C:\datasets\tapakah68\anti-spoofing\versions\3\replay\vid.mp4", "spoof"),
+        (r"C:\datasets\tapakah68\anti-spoofing\versions\3\live_selfie\photo.jpg", "real"),
+        (r"C:\datasets\tapakah68\anti-spoofing\versions\3\live_video\vid.mp4", "real"),
     ])
     def test_keyword_matching(self, path, expected):
         """Label should match known keywords in the path."""

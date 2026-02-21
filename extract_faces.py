@@ -58,6 +58,7 @@ load_dotenv()
 # Constants & defaults (overridable via .env or CLI)
 # ═══════════════════════════════════════════════════════════════
 DEFAULT_DATASET_ROOT  = os.getenv("DATASET_ROOT", "")
+DEFAULT_DATASET_ROOTS = os.getenv("DATASET_ROOTS", "")  # semicolon-separated list
 DEFAULT_OUTPUT_DIR    = os.getenv("OUTPUT_DIR", "data/frames")
 DEFAULT_CROP_SIZE     = int(os.getenv("FACE_CROP_SIZE", "224"))
 DEFAULT_SAMPLE_FPS    = int(os.getenv("VIDEO_SAMPLE_FPS", "3"))
@@ -238,13 +239,16 @@ def infer_label(filepath: str) -> str:
     # IMPORTANT: Check spoof FIRST — some dataset parent paths contain "real"
     # in their name (e.g. "liveness-detection-real-and-display-attacks-5k")
     spoof_segment_keywords = {
-        "spoof", "fake", "print", "replay", "mask", "attack",
+        "spoof", "fake", "print", "printout", "printouts",
+        "replay", "mask", "attack",
         "screen", "display", "photo_attack", "video_attack",
+        "cutout",  # tapakah68: "cut-out printouts" folder
     }
 
     # Keywords that indicate real when they appear as a whole segment/token
     real_segment_keywords = {
         "real", "live", "genuine", "bonafide", "bona_fide",
+        "live_selfie", "live_video",  # trainingdatapro filenames
     }
 
     # Check each segment (folder name) for exact keyword match
@@ -588,7 +592,13 @@ def parse_args() -> argparse.Namespace:
         "--dataset_root",
         type=str,
         default=DEFAULT_DATASET_ROOT,
-        help="Root directory of the raw dataset.",
+        help="Root directory of a single raw dataset.",
+    )
+    parser.add_argument(
+        "--dataset_roots",
+        type=str,
+        default=DEFAULT_DATASET_ROOTS,
+        help="Semicolon-separated list of dataset root directories (overrides --dataset_root).",
     )
     parser.add_argument(
         "--output_dir",
@@ -620,73 +630,63 @@ def parse_args() -> argparse.Namespace:
 # ═══════════════════════════════════════════════════════════════
 # 10. Main pipeline
 # ═══════════════════════════════════════════════════════════════
-def main() -> None:
+def _resolve_roots(args) -> List[str]:
     """
-    Entry point: orchestrate the full face-extraction pipeline.
+    Build a list of dataset root directories from CLI args.
 
-    Steps:
-        1.  Parse CLI args / .env config.
-        2.  Write architecture.md.
-        3.  Set up logging.
-        4.  Initialise MTCNN detector.
-        5.  Discover video & image files under dataset_root.
-        6.  For each file — detect, crop, save, record.
-        7.  Write labels.csv.
+    Priority:
+      1. --dataset_roots (semicolon-separated, from CLI or DATASET_ROOTS env)
+      2. --dataset_root  (single path, from CLI or DATASET_ROOT env)
+
+    Returns a list of validated, existing directory paths.
     """
-    # ── Parse arguments ──────────────────────────────────────
-    args = parse_args()
+    roots: List[str] = []
 
-    # ── Setup logging early ──────────────────────────────────
-    logger = setup_logging(args.log_level)
+    if args.dataset_roots:
+        # Split semicolon-separated list and strip whitespace
+        candidates = [r.strip() for r in args.dataset_roots.split(";") if r.strip()]
+        roots.extend(candidates)
+    elif args.dataset_root:
+        roots.append(args.dataset_root.strip())
 
-    # ── Write/update architecture.md ─────────────────────────
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    write_architecture_doc(project_root)
+    # Validate each root exists
+    valid = [r for r in roots if os.path.isdir(r)]
+    return valid
 
-    # ── Validate dataset root ────────────────────────────────
-    if not args.dataset_root or not os.path.isdir(args.dataset_root):
-        logger.error(
-            "DATASET_ROOT is not set or does not exist: '%s'. "
-            "Set it in .env or pass --dataset_root.",
-            args.dataset_root,
-        )
-        sys.exit(1)
 
-    # ── Clamp FPS to 1-5 range ───────────────────────────────
+def _process_one_root(
+    dataset_root: str,
+    args,
+    detector,
+    logger_inst,
+) -> Tuple[int, int, int, int]:
+    """
+    Run the extraction pipeline on a single dataset root directory.
+
+    Returns (total_saved, n_real, n_spoof, n_unknown).
+    """
     sample_fps = max(1, min(5, args.fps))
-    if sample_fps != args.fps:
-        logger.warning("FPS clamped to %d (requested %d)", sample_fps, args.fps)
 
-    # ── Derive dataset name from the root folder ─────────────
-    dataset_name = os.path.basename(os.path.normpath(args.dataset_root))
-
-    # ── Build output directories ─────────────────────────────
+    dataset_name = os.path.basename(os.path.normpath(dataset_root))
     real_dir  = os.path.join(args.output_dir, dataset_name, "real")
     spoof_dir = os.path.join(args.output_dir, dataset_name, "spoof")
     os.makedirs(real_dir, exist_ok=True)
     os.makedirs(spoof_dir, exist_ok=True)
-    logger.info("Output dirs: %s , %s", real_dir, spoof_dir)
+    logger_inst.info("Output dirs: %s , %s", real_dir, spoof_dir)
 
-    # ── Initialise face detector ─────────────────────────────
-    detector = create_detector(crop_size=args.crop_size)
-
-    # ── Discover files ───────────────────────────────────────
-    videos, images = discover_files(args.dataset_root)
+    videos, images = discover_files(dataset_root)
 
     if not videos and not images:
-        logger.error("No video or image files found under %s", args.dataset_root)
-        sys.exit(1)
+        logger_inst.warning("No video or image files found under %s — skipping", dataset_root)
+        return 0, 0, 0, 0
 
-    # ── Counters for unique filenames per label ──────────────
     counters = {"real": 0, "spoof": 0, "unknown": 0}
     all_records: List[dict] = []
     total_saved = 0
 
-    # ── Process videos ───────────────────────────────────────
     for vpath in videos:
         label = infer_label(vpath)
         out_dir = real_dir if label == "real" else spoof_dir
-
         try:
             saved, records = extract_faces_from_video(
                 video_path=vpath,
@@ -698,18 +698,15 @@ def main() -> None:
                 counter_start=counters[label],
             )
         except Exception as exc:
-            logger.error("Failed on video %s: %s — skipping", vpath, exc)
+            logger_inst.error("Failed on video %s: %s — skipping", vpath, exc)
             continue
-
         counters[label] += saved
         total_saved += saved
         all_records.extend(records)
 
-    # ── Process images ───────────────────────────────────────
     for ipath in images:
         label = infer_label(ipath)
         out_dir = real_dir if label == "real" else spoof_dir
-
         try:
             saved, records = extract_faces_from_image(
                 image_path=ipath,
@@ -720,25 +717,93 @@ def main() -> None:
                 counter_start=counters[label],
             )
         except Exception as exc:
-            logger.error("Failed on image %s: %s — skipping", ipath, exc)
+            logger_inst.error("Failed on image %s: %s — skipping", ipath, exc)
             continue
-
         counters[label] += saved
         total_saved += saved
         all_records.extend(records)
 
-    # ── Write CSV ────────────────────────────────────────────
     csv_path = os.path.join(args.output_dir, dataset_name, "labels.csv")
     write_csv(all_records, csv_path)
 
-    # ── Summary ──────────────────────────────────────────────
+    logger_inst.info("  [%s]  saved=%d  real=%d  spoof=%d  unknown=%d  csv=%s",
+                     dataset_name, total_saved,
+                     counters["real"], counters["spoof"], counters["unknown"],
+                     csv_path)
+
+    return total_saved, counters["real"], counters["spoof"], counters["unknown"]
+
+
+def main() -> None:
+    """
+    Entry point: orchestrate the full face-extraction pipeline.
+
+    Steps:
+        1.  Parse CLI args / .env config.
+        2.  Write architecture.md.
+        3.  Set up logging.
+        4.  Resolve one or more dataset root directories.
+        5.  Initialise MTCNN detector.
+        6.  For each root — discover, detect, crop, save, write CSV.
+        7.  Print grand summary.
+    """
+    # ── Parse arguments ──────────────────────────────────────
+    args = parse_args()
+
+    # ── Setup logging early ──────────────────────────────────
+    logger = setup_logging(args.log_level)
+
+    # ── Write/update architecture.md ─────────────────────────
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    write_architecture_doc(project_root)
+
+    # ── Resolve dataset roots ────────────────────────────────
+    roots = _resolve_roots(args)
+    if not roots:
+        logger.error(
+            "No valid dataset root found.  "
+            "Set DATASET_ROOTS in .env (semicolon-separated) "
+            "or pass --dataset_root / --dataset_roots on the CLI.",
+        )
+        sys.exit(1)
+
+    logger.info("Processing %d dataset root(s):", len(roots))
+    for r in roots:
+        logger.info("  • %s", r)
+
+    # ── Clamp FPS to 1-5 range ───────────────────────────────
+    sample_fps = max(1, min(5, args.fps))
+    if sample_fps != args.fps:
+        logger.warning("FPS clamped to %d (requested %d)", sample_fps, args.fps)
+
+    # ── Initialise face detector (shared across roots) ───────
+    detector = create_detector(crop_size=args.crop_size)
+
+    # ── Process each root ────────────────────────────────────
+    grand_total = 0
+    grand_real  = 0
+    grand_spoof = 0
+    grand_unk   = 0
+
+    for root in roots:
+        logger.info("─" * 50)
+        logger.info("Dataset root: %s", root)
+        saved, n_real, n_spoof, n_unk = _process_one_root(
+            root, args, detector, logger,
+        )
+        grand_total += saved
+        grand_real  += n_real
+        grand_spoof += n_spoof
+        grand_unk   += n_unk
+
+    # ── Grand summary ────────────────────────────────────────
     logger.info("═" * 50)
-    logger.info("Pipeline complete.")
-    logger.info("  Total crops saved : %d", total_saved)
-    logger.info("  Real              : %d", counters["real"])
-    logger.info("  Spoof             : %d", counters["spoof"])
-    logger.info("  Unknown-label     : %d", counters["unknown"])
-    logger.info("  CSV               : %s", csv_path)
+    logger.info("All datasets complete.")
+    logger.info("  Datasets processed : %d", len(roots))
+    logger.info("  Total crops saved  : %d", grand_total)
+    logger.info("  Real               : %d", grand_real)
+    logger.info("  Spoof              : %d", grand_spoof)
+    logger.info("  Unknown-label      : %d", grand_unk)
     logger.info("═" * 50)
 
 
