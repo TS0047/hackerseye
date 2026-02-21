@@ -104,3 +104,12 @@ Matching
 └── Cosine similarity between live embedding and all DB embeddings
     → Pick highest score; label Unknown if below threshold
 ```
+
+
+3D_ detector Training phase :
+
+Sit in front of the camera, wait for calibration to finish (100%)
+Press R a bunch of times to teach it what your real face looks like
+Then hold up a photo of a face on your phone screen and press S several times
+Press W to save
+The more samples you collect over multiple sessions, the more accurate it gets
