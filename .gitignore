@@ -2,5 +2,15 @@
 .env.*
 data/
 
-__pycache__/*
+__pycache__/
 *.pyc
+
+# Runtime / model artefacts
+*.db
+*.task
+checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.pytest_cache/

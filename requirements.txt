@@ -10,9 +10,9 @@ Pillow>=10.0.0             # PIL image handling
 torch>=2.0.0               # PyTorch (MTCNN backend)
 torchvision>=0.15.0        # transforms for Dataset (Phase 2)
 
-# ── Other dependencies ──
-mediapipe
-scipy
+# ── cuDNN / cuBLAS for ONNX Runtime GPU on Windows ──
+nvidia-cudnn-cu12>=9.0.0
+nvidia-cublas-cu12>=12.0.0
 
 # ── Testing ──
 pytest>=7.0.0

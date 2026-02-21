@@ -95,3 +95,27 @@ data/
 Replay / screen attacks exhibit subtle temporal artefacts (flicker, unnatural
 motion, moiré patterns) that single-frame models miss. Aggregating across
 frames lets the model exploit these cues.
+
+---
+
+## Phase 8: Live Demo
+
+**Script:** `hackerseye_antispoof.py`  
+**Input:** webcam frames (real-time)  
+**Output:** real/spoof predictions with temporal smoothing  
+
+### Pipeline
+1. Capture frame from webcam (OpenCV).
+2. Detect face with MTCNN → crop and resize to 224×224.
+3. Buffer the last T crops in a rolling `FrameBuffer` (for temporal mode).
+4. Run inference:
+   - **Single-frame mode:** latest crop → baseline CNN → logit.
+   - **Temporal mode:** T-frame sequence → temporal model → logit.
+5. Smooth raw sigmoid probability via exponential moving average (EMA).
+6. Display bounding box, REAL/SPOOF label, and confidence score live.
+
+### Temporal smoothing
+```
+smoothed[t] = α · raw[t]  +  (1 − α) · smoothed[t−1]
+```
+Default α = 0.3 gives a good balance between stability and responsiveness.
