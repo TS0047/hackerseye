@@ -14,7 +14,7 @@ Webcam Frame → Detect Face → 512D Embedding → Compare DB → Draw Box + Na
 |------|---------|
 | `database.py` | SQLite helpers — init, add, get, delete |
 | `register.py` | Capture + register a new person |
-| `live_recognition.py` | Real-time webcam recognition |
+| `hackerseye_live.py` | Real-time webcam recognition |
 | `manage_db.py` | CLI to list / delete users |
 | `requirements.txt` | Python dependencies |
 
@@ -27,7 +27,7 @@ pip install -r requirements.txt
 ```
 
 > **No NVIDIA GPU?** Replace `onnxruntime-gpu` with `onnxruntime` in requirements.txt
-> and set `CTX_ID = -1` in `live_recognition.py` and `register.py`.
+> and set `CTX_ID = -1` in `hackerseye_live.py` and `register.py`.
 
 InsightFace will auto-download the `buffalo_l` model (~300 MB) on first run.
 
@@ -53,7 +53,7 @@ python register_from_video.py --name "Alice" --webcam --duration 5
 ## 🪜 Step 2 — Run Live Recognition
 
 ```bash
-python live_recognition.py
+python hackerseye_live.py
 ```
 
 | Key | Action |
@@ -82,7 +82,7 @@ python manage_db.py reset              # Wipe everything
 
 | Parameter | Location | Effect |
 |-----------|----------|--------|
-| `THRESHOLD` | `live_recognition.py` | Lower = stricter matching (fewer false positives) |
+| `THRESHOLD` | `hackerseye_live.py` | Lower = stricter matching (fewer false positives) |
 | `--samples` | `register.py` | More samples = more robust embedding |
 | `CTX_ID` | both scripts | `0` = GPU, `-1` = CPU |
 

@@ -9,6 +9,8 @@ Controls (during capture):
     Q      — quit without saving
 """
 
+import _nvidia_dll_fix  # noqa: F401 — register cuDNN/cuBLAS DLLs before ONNX
+
 import cv2
 import numpy as np
 import argparse

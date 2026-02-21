@@ -1,11 +1,19 @@
 """
-live_recognition.py — Real-time face recognition using InsightFace + SQLite
+hackerseye_live.py — Real-time face recognition using InsightFace + SQLite
+
+Optimised for speed:
+  - Smaller detection resolution (320×320) for faster face detection
+  - Skip-frame detection: run heavy face model every N frames,
+    reuse cached bounding boxes + embeddings in between
+  - Pre-normalise DB embeddings once at load time
 
 Controls:
     Q     — quit
     R     — reload database (pick up newly registered users without restarting)
     S     — toggle stats overlay
 """
+
+import _nvidia_dll_fix  # noqa: F401 — register cuDNN/cuBLAS DLLs before ONNX
 
 import cv2
 import numpy as np
@@ -16,33 +24,42 @@ from database import get_all_users, init_db
 # ──────────────────────────────────────────────
 # Config
 # ──────────────────────────────────────────────
-THRESHOLD    = 0.45   # Cosine similarity threshold (lower = stricter)
+THRESHOLD    = 0.45    # Cosine similarity threshold (lower = stricter)
 FRAME_W      = 640
 FRAME_H      = 480
 MODEL_NAME   = "buffalo_l"
-CTX_ID       = 0      # 0 = GPU, -1 = CPU
+CTX_ID       = 0       # 0 = GPU (ONNX Runtime CUDA), -1 = CPU
+DET_SIZE     = (320, 320)  # Detection resolution (smaller = faster; default was 640×640)
+DETECT_EVERY = 3       # Run face detection every N frames (reuse boxes in between)
 
 # ──────────────────────────────────────────────
-# Load model
+# Load model — use smaller det_size for speed
 # ──────────────────────────────────────────────
 print("[Init] Loading InsightFace model...")
 app = FaceAnalysis(name=MODEL_NAME)
-app.prepare(ctx_id=CTX_ID)
-print("[Init] Model ready.")
+app.prepare(ctx_id=CTX_ID, det_size=DET_SIZE)
+print(f"[Init] Model ready.  det_size={DET_SIZE}  ctx={'GPU' if CTX_ID >= 0 else 'CPU'}")
 
 # ──────────────────────────────────────────────
-# Similarity
+# Similarity — vectorised for multiple DB users
 # ──────────────────────────────────────────────
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    a = a / (np.linalg.norm(a) + 1e-8)
-    b = b / (np.linalg.norm(b) + 1e-8)
+    """Cosine similarity between two L2-normalised vectors."""
     return float(np.dot(a, b))
 
+
+def normalise(v: np.ndarray) -> np.ndarray:
+    """L2-normalise a vector (or return zero-vector if norm ≈ 0)."""
+    norm = np.linalg.norm(v)
+    return v / (norm + 1e-8)
+
 # ──────────────────────────────────────────────
-# Load users
+# Load users (pre-normalise embeddings once)
 # ──────────────────────────────────────────────
 def load_users():
-    users = get_all_users()
+    """Load DB users and pre-normalise their embeddings for fast cosine sim."""
+    raw_users = get_all_users()
+    users = [(name, normalise(emb)) for name, emb in raw_users]
     print(f"[DB] Loaded {len(users)} user(s): {[u[0] for u in users]}")
     return users
 
@@ -73,8 +90,13 @@ fps_counter  = 0
 fps_display  = 0.0
 fps_timer    = time.time()
 show_stats   = True
+frame_num    = 0
 
-print("\n✅ Live recognition started.")
+# Cache for skip-frame reuse
+cached_results = []   # list of (x1,y1,x2,y2, best_name, best_score, color)
+
+print("\n✅ HackersEye Live started.")
+print(f"   Detection every {DETECT_EVERY} frames | det_size={DET_SIZE}")
 print("   Q = quit | R = reload DB | S = toggle stats\n")
 
 # ──────────────────────────────────────────────
@@ -86,28 +108,36 @@ while True:
         print("[Error] Frame capture failed.")
         break
 
-    # ── Detect & recognise ──────────────────────
-    faces = app.get(frame)
+    frame_num += 1
 
-    for face in faces:
-        x1, y1, x2, y2 = map(int, face.bbox)
-        embedding = face.embedding.astype(np.float32)
+    # ── Run detection only every N-th frame ─────
+    if frame_num % DETECT_EVERY == 1 or DETECT_EVERY == 1:
+        faces = app.get(frame)
 
-        best_name  = "Unknown"
-        best_score = 0.0
+        cached_results = []
+        for face in faces:
+            x1, y1, x2, y2 = map(int, face.bbox)
+            embedding = normalise(face.embedding.astype(np.float32))
 
-        for name, db_emb in users:
-            score = cosine_similarity(embedding, db_emb)
-            if score > best_score:
-                best_score = score
-                best_name  = name
+            best_name  = "Unknown"
+            best_score = 0.0
 
-        if best_score < THRESHOLD:
-            best_name = "Unknown"
-            color     = (0, 0, 255)   # Red
-        else:
-            color     = (0, 255, 0)   # Green
+            for name, db_emb in users:
+                score = cosine_similarity(embedding, db_emb)
+                if score > best_score:
+                    best_score = score
+                    best_name  = name
 
+            if best_score < THRESHOLD:
+                best_name = "Unknown"
+                color     = (0, 0, 255)   # Red
+            else:
+                color     = (0, 255, 0)   # Green
+
+            cached_results.append((x1, y1, x2, y2, best_name, best_score, color))
+
+    # ── Draw cached results on every frame ──────
+    for (x1, y1, x2, y2, best_name, best_score, color) in cached_results:
         # Bounding box
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 
@@ -136,7 +166,7 @@ while True:
     if show_stats:
         info_lines = [
             f"FPS:   {fps_display:.1f}",
-            f"Faces: {len(faces)}",
+            f"Faces: {len(cached_results)}",
             f"Users: {len(users)}",
             f"Thr:   {THRESHOLD}",
         ]
@@ -151,7 +181,7 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45,
                 (180, 180, 180), 1, cv2.LINE_AA)
 
-    cv2.imshow("Live Face Recognition", frame)
+    cv2.imshow("HackersEye Live Recognition", frame)
 
     # ── Key handling ────────────────────────────
     key = cv2.waitKey(1) & 0xFF

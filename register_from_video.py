@@ -15,6 +15,8 @@ Usage:
     python register_from_video.py --name "Alice" --video alice.mp4 --samples 20
 """
 
+import _nvidia_dll_fix  # noqa: F401 — register cuDNN/cuBLAS DLLs before ONNX
+
 import cv2
 import numpy as np
 import argparse
@@ -140,4 +142,4 @@ avg_embedding /= np.linalg.norm(avg_embedding)   # re-normalise after averaging
 
 add_user(args.name, avg_embedding)
 print(f"\n✅ '{args.name}' registered successfully using {len(embeddings_collected)} averaged samples!")
-print("   Run live_recognition.py to start recognising.\n")
+print("   Run hackerseye_live.py to start recognising.\n")
