@@ -2,3 +2,12 @@ insightface>=0.7.3
 opencv-python>=4.8.0
 numpy>=1.24.0
 onnxruntime-gpu>=1.16.0   # swap for onnxruntime if no NVIDIA GPU
+
+# ── Face extraction pipeline (extract_faces.py) ──
+facenet-pytorch>=2.5.3     # MTCNN face detector
+python-dotenv>=1.0.0       # .env file loading
+Pillow>=10.0.0             # PIL image handling
+torch>=2.0.0               # PyTorch (MTCNN backend)
+
+# ── Testing ──
+pytest>=7.0.0
