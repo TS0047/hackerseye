@@ -1,10 +1,12 @@
 """
 live_recognition.py — Real-time face recognition using InsightFace + SQLite
+                       with liveness / anti-spoof detection (MiniFASNet ONNX)
 
 Controls:
     Q     — quit
     R     — reload database (pick up newly registered users without restarting)
     S     — toggle stats overlay
+    L     — toggle liveness check on/off
 """
 
 import cv2
@@ -12,6 +14,7 @@ import numpy as np
 import time
 from insightface.app import FaceAnalysis
 from database import get_all_users, init_db
+from anti_spoof_utils import AntiSpoofChecker
 
 # ──────────────────────────────────────────────
 # Config
@@ -22,6 +25,10 @@ FRAME_H      = 480
 MODEL_NAME   = "buffalo_l"
 CTX_ID       = 0      # 0 = GPU, -1 = CPU
 
+# Anti-spoof
+SPOOF_MODEL   = "best_model_quantized.onnx"   # swap for best_model.onnx if needed
+SPOOF_THRESH  = 0.50        # logit-diff cutoff: 0.0 = p_real>50%, raise to be stricter
+
 # ──────────────────────────────────────────────
 # Load model
 # ──────────────────────────────────────────────
@@ -29,6 +36,10 @@ print("[Init] Loading InsightFace model...")
 app = FaceAnalysis(name=MODEL_NAME)
 app.prepare(ctx_id=CTX_ID)
 print("[Init] Model ready.")
+
+print("[Init] Loading anti-spoof model...")
+spoof_checker  = AntiSpoofChecker(SPOOF_MODEL, threshold=SPOOF_THRESH)
+liveness_on    = True   # toggled with L key
 
 # ──────────────────────────────────────────────
 # Similarity
@@ -75,7 +86,7 @@ fps_timer    = time.time()
 show_stats   = True
 
 print("\n✅ Live recognition started.")
-print("   Q = quit | R = reload DB | S = toggle stats\n")
+print("   Q = quit | R = reload DB | S = toggle stats | L = toggle liveness\n")
 
 # ──────────────────────────────────────────────
 # Main loop
@@ -91,6 +102,16 @@ while True:
 
     for face in faces:
         x1, y1, x2, y2 = map(int, face.bbox)
+
+        # ── Liveness check ──────────────────────────
+        if liveness_on:
+            face_crop = frame[y1:y2, x1:x2]
+            is_live, spoof_score = spoof_checker.annotate_frame(
+                frame, (x1, y1, x2, y2)
+            )
+            if not is_live:
+                continue   # spoof detected — skip recognition entirely
+
         embedding = face.embedding.astype(np.float32)
 
         best_name  = "Unknown"
@@ -135,10 +156,11 @@ while True:
 
     if show_stats:
         info_lines = [
-            f"FPS:   {fps_display:.1f}",
-            f"Faces: {len(faces)}",
-            f"Users: {len(users)}",
-            f"Thr:   {THRESHOLD}",
+            f"FPS:     {fps_display:.1f}",
+            f"Faces:   {len(faces)}",
+            f"Users:   {len(users)}",
+            f"Thr:     {THRESHOLD}",
+            f"Spoof:   {'ON' if liveness_on else 'OFF'}",
         ]
         for i, line in enumerate(info_lines):
             cv2.putText(frame, line,
@@ -146,7 +168,7 @@ while True:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                         (255, 255, 255), 1, cv2.LINE_AA)
 
-    cv2.putText(frame, "Q=Quit  R=Reload  S=Stats",
+    cv2.putText(frame, "Q=Quit  R=Reload  S=Stats  L=Liveness",
                 (10, FRAME_H - 10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45,
                 (180, 180, 180), 1, cv2.LINE_AA)
@@ -166,6 +188,11 @@ while True:
 
     elif key == ord('s'):
         show_stats = not show_stats
+
+    elif key == ord('l'):
+        liveness_on = not liveness_on
+        state = "ON" if liveness_on else "OFF"
+        print(f"[Liveness] Anti-spoof toggled {state}")
 
 cap.release()
 cv2.destroyAllWindows()
