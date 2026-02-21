@@ -94,6 +94,7 @@ class TestInferLabel:
     """Tests for infer_label()."""
 
     @pytest.mark.parametrize("path, expected", [
+        # ── Basic folder-name matching ──
         (r"C:\data\real\video001.mp4", "real"),
         ("/datasets/live/clip.avi", "real"),
         (r"D:\genuine\face.jpg", "real"),
@@ -101,6 +102,22 @@ class TestInferLabel:
         (r"C:\fake\images\face.png", "spoof"),
         ("/dataset/replay/attack.avi", "spoof"),
         ("/other/misc/random.mp4", "unknown"),
+
+        # ── Axondata dataset: "Screen" folder = spoof ──
+        (r"C:\datasets\Axon Labs Replay Display sample\Screen\20240823_194131.mp4", "spoof"),
+        (r"C:\datasets\Axon Labs Replay Display sample\Real\1.jpg", "real"),
+
+        # ── "real" inside a long parent path should NOT false-positive ──
+        # The parent "liveness-detection-real-and-display-attacks-5k" has "real"
+        # but "Screen" subfolder should win as spoof
+        (r"C:\cache\liveness-detection-real-and-display-attacks-5k\v4\Axon Labs Replay Display sample\Screen\clip.mp4", "spoof"),
+
+        # ── TrainingDataPro: filename "live_selfie.jpg" → real ──
+        (r"C:\data\samples\hash123\live_selfie.jpg", "real"),
+        (r"C:\data\samples\hash123\live_video.mp4", "real"),
+
+        # ── "display" folder = spoof ──
+        ("/data/display/attack01.mp4", "spoof"),
     ])
     def test_keyword_matching(self, path, expected):
         """Label should match known keywords in the path."""
@@ -110,6 +127,17 @@ class TestInferLabel:
         """Keywords should match regardless of case."""
         assert ef.infer_label("/Data/REAL/clip.mp4") == "real"
         assert ef.infer_label("/Data/SPOOF/clip.mp4") == "spoof"
+        assert ef.infer_label("/Data/Screen/clip.mp4") == "spoof"
+
+    def test_replay_not_false_positive_real(self):
+        """'replay' should be spoof, not trigger 'real' substring match."""
+        assert ef.infer_label("/data/replay/clip.mp4") == "spoof"
+
+    def test_segment_matching_over_substring(self):
+        """Only full segment/token matches, not substrings within words."""
+        # "screensaver" contains "screen" as a token, but
+        # "realism" should NOT match "real" — it's not a segment
+        assert ef.infer_label("/data/realism/clip.mp4") == "unknown"
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -8,6 +8,11 @@ facenet-pytorch>=2.5.3     # MTCNN face detector
 python-dotenv>=1.0.0       # .env file loading
 Pillow>=10.0.0             # PIL image handling
 torch>=2.0.0               # PyTorch (MTCNN backend)
+torchvision>=0.15.0        # transforms for Dataset (Phase 2)
+
+# ── Other dependencies ──
+mediapipe
+scipy
 
 # ── Testing ──
 pytest>=7.0.0

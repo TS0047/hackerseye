@@ -195,11 +195,19 @@ def infer_label(filepath: str) -> str:
     """
     Infer the anti-spoofing label from the file's path components.
 
-    The dataset is expected to contain folder names such as
-    'real', 'live', 'genuine'  →  "real"
-    'spoof', 'fake', 'print', 'replay', 'mask'  →  "spoof"
+    The function splits the path into individual directory/file name segments
+    and checks each segment against known keywords. This prevents false
+    positives like "real" matching inside "replay" or "liveness-detection-
+    real-and-display" in a long path.
 
-    If no known keyword is found the file is classified as "unknown".
+    Spoof keywords are checked FIRST because some dataset paths contain
+    both "real" and spoof-related words (e.g. "liveness-detection-real-
+    and-display-attacks").
+
+    Known folder names mapped to labels:
+        real  ← 'real', 'live', 'genuine', 'bonafide', 'bona_fide'
+        spoof ← 'spoof', 'fake', 'print', 'replay', 'mask', 'attack',
+                 'screen', 'display', 'photo_attack', 'video_attack'
 
     Parameters
     ----------
@@ -211,19 +219,51 @@ def infer_label(filepath: str) -> str:
     str
         One of "real", "spoof", or "unknown".
     """
-    # Normalise separators and lower-case for matching
-    parts = filepath.replace("\\", "/").lower()
+    # Normalise path separators and lower-case for matching
+    normalised = filepath.replace("\\", "/").lower()
 
-    real_keywords  = ["real", "live", "genuine", "bonafide", "bona_fide"]
-    spoof_keywords = ["spoof", "fake", "print", "replay", "mask", "attack", "photo"]
+    # Split into individual folder/file segments for precise matching
+    # e.g. "C:/data/Screen/clip.mp4" → ["c:", "data", "screen", "clip.mp4"]
+    segments = [s for s in normalised.split("/") if s]
 
-    # Check every keyword against any directory component
-    for kw in real_keywords:
-        if kw in parts:
-            return "real"
-    for kw in spoof_keywords:
-        if kw in parts:
+    # Also check filenames like "live_selfie.jpg" by splitting on underscores
+    # so "live_selfie" gives us ['live', 'selfie']
+    all_tokens = []
+    for seg in segments:
+        # Split segment on common delimiters (-, _, .)
+        parts = seg.replace("-", " ").replace("_", " ").replace(".", " ").split()
+        all_tokens.extend(parts)
+
+    # Keywords that indicate spoof when they appear as a whole segment/token
+    # IMPORTANT: Check spoof FIRST — some dataset parent paths contain "real"
+    # in their name (e.g. "liveness-detection-real-and-display-attacks-5k")
+    spoof_segment_keywords = {
+        "spoof", "fake", "print", "replay", "mask", "attack",
+        "screen", "display", "photo_attack", "video_attack",
+    }
+
+    # Keywords that indicate real when they appear as a whole segment/token
+    real_segment_keywords = {
+        "real", "live", "genuine", "bonafide", "bona_fide",
+    }
+
+    # Check each segment (folder name) for exact keyword match
+    # This is the primary check — most datasets name their folders clearly
+    for seg in segments:
+        seg_clean = seg.strip()
+        if seg_clean in spoof_segment_keywords:
             return "spoof"
+        if seg_clean in real_segment_keywords:
+            return "real"
+
+    # Fallback: check individual tokens from filenames/folder names
+    # e.g. "live_selfie.jpg" → tokens ['live', 'selfie', 'jpg']
+    for token in all_tokens:
+        if token in spoof_segment_keywords:
+            return "spoof"
+    for token in all_tokens:
+        if token in real_segment_keywords:
+            return "real"
 
     return "unknown"
 

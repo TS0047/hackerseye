@@ -38,6 +38,9 @@ InsightFace will auto-download the `buffalo_l` model (~300 MB) on first run.
 ```bash
 python register.py --name "Alice"
 python register.py --name "Bob" --samples 8
+python register_from_video.py --name "Alice" --video alice.mp4
+
+python register_from_video.py --name "Alice" --webcam --duration 5
 ```
 
 - A webcam window opens.
